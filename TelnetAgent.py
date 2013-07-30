@@ -4,7 +4,7 @@ import telnetlib
 
 class TelnetAgent(object):
 
-    def __init__(self, host_name, user, password, prompt, timeout = 2):
+    def __init__(self, host_name, user, password, prompt, timeout = 5):
         self.host_name = host_name
         self.user = user
         self.password = password
@@ -16,10 +16,16 @@ class TelnetAgent(object):
         try:
             self.tn = telnetlib.Telnet(self.host_name)
             try:    
-                self.tn.read_until(b'login: ')
-                self.tn.write(self.user.encode() + b'\r\n')
-                self.tn.read_until(b'Password: ')
-                self.tn.write(self.password.encode() + b'\r\n')
+                ret = self.tn.read_until(b'login:', self.timeout)
+                if 'login:' in ret.decode().lower().split():
+                    self.tn.write(self.user.encode() + b'\r\n')
+                else:
+                    raise Exception(ret.decode())
+                ret = self.tn.read_until(b'Password: ', self.timeout)
+                if 'password:' in ret.decode().lower().split():
+                    self.tn.write(self.password.encode() + b'\r\n')
+                else:
+                    raise Exception(ret.decode())
                 if self.prompt in self.tn.read_until(self.prompt.encode(), self.timeout).decode():
                     return True
                 else:
@@ -58,11 +64,10 @@ class TelnetAgent(object):
 def main():
     telnetcon =  TelnetAgent('172.16.11.163', 'admin', 'admin', '\> ')
     process_list = ['collectorce','datasender','retriever','ntpclient']
-
+    import pdb; pdb.set_trace()
     try:
         if telnetcon.login():
             #telnetcon.run('reboot')
-            import pdb; pdb.set_trace()
             telnetcon.run('cd \CFDisk\output')
             ret = telnetcon.run('dir')
             telnetcon.run('del output.csv.temp')

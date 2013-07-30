@@ -3,8 +3,13 @@
 from SSH_Agent import SSH_Agent
 from TelnetAgent import TelnetAgent
 from threading import Thread
-import optparse, pdb, threading
+import optparse, pdb, threading, logging
 from time import sleep
+
+moxa_readers = ['161', '162', '163', '164', '165', '166', '167', '168', '169', '170', '175', '176']
+uno1150_readers = ['177', '178', '179']
+sleep_time = 20
+glob_logger = logging.getLogger('Rrestart')
 
 def moxa_readers_restart(enclosure, applications_list, hard_reboot_flag=False):
     telnetcon = TelnetAgent(enclosure, 'admin', 'admin', '\> ')
@@ -12,16 +17,23 @@ def moxa_readers_restart(enclosure, applications_list, hard_reboot_flag=False):
         if telnetcon.login():
             while True:
                 if not moxa_readers_apps_kill(telnetcon, applications_list, hard_reboot_flag):
+                    glob_logger.debug("Target apps terminated on reader {0}".format(enclosure))
                     break
             if not hard_reboot_flag:
                 while True:
                     if moxa_readers_apps_start(telnetcon, applications_list):     
+                        glob_logger.debug("Target apps restarted on reader {0}, no system reboot performed.".format(enclosure))
+                        telnetcon.logout()
                         break
             else:
                 telnetcon.run("reboot")
-        print("Reader {0} restarted.".format(enclosure))
+                glob_logger.debug("System reboot on reader {0} completed.".format(enclosure))
+
+        sleep(sleep_time)
+        remote_diag(enclosure)
+
     except Exception as e:
-        raise e
+        raise Exception("Exception on reader {0} ".format(enclosure) + e.args[0])
 
 def moxa_readers_apps_kill(telnetcon, applications_list, hard_reboot_flag):
     ret = telnetcon.get_pid(telnetcon.run('ps'), applications_list)
@@ -62,16 +74,23 @@ def uno1150_readers_restart(enclosure, applications_list, hard_reboot_flag=False
         if SSH_con.login():
             while True:
                 if not uno1150_reader_apps_kill(SSH_con, applications_list):
+                    glob_logger.debug("Target apps terminated on reader {0}".format(enclosure))
                     break
             if not hard_reboot_flag:
                 while True:
                     if uno1150_reader_apps_start(SSH_con, applications_list):
+                        SSH_con.logout()
+                        glob_logger.debug("Target apps restarted on reader {0}, no system reboot performed.".format(enclosure))
                         break
             else:
                 SSH_con.run("restart",'[\$$]', expect_ret=False)
-        print("Reader {0} restarted.".format(enclosure))
+                glob_logger.debug("System reboot on reader {0} completed.".format(enclosure))
+        
+        sleep(sleep_time)
+        remote_diag(enclosure)
+
     except Exception as e:
-        raise e
+        raise Exception("Exception on reader {0} ".format(enclosure) + e.args[0])
 
 def uno1150_reader_apps_kill(SSH_con, applications_list):
     prompt = '[\$$]'
@@ -102,14 +121,45 @@ def uno1150_reader_apps_start(SSH_con, applications_list):
         SSH_con.run('./{0}'.format(bash_script), prompt)
     
     return len(applications_list) == len(SSH_con.run("ps -W | grep '{0}'".format(search_string), prompt))
- 
+
+def remote_diag(reader):
+    glob_logger.debug("Remote diagnosis for reader {0} is starting.".format(reader))
+    if reader in moxa_readers:
+        test_con = TelnetAgent(reader, 'admin', 'admin', '\> ')
+        try:
+            test_con.login()
+            test_con.logout()
+        except Exception as e:
+            glob_logger.error("Reader {0} failed login test, hard reboot will be execute.".format(reader))
+            hard_reboot(reader)
+            glob_logger.debug("Reader {0} hard reboot complete.".format(reader))
+    elif reader in uno1150_readers:
+        test_con = SSH_Agent(reader, 'admin', 'admin')
+        try:
+            test_con.login()
+            test_con.logout()
+        except Exception as e:
+            glob_logger.error("Reader {0} failed login test, hard reboot will be execute.".format(reader))
+            hard_reboot(reader)
+            glob_logger.debug("Reader {0} hard reboot complete.".format(reader))
+    glob_logger.debug("Remote diagnosis for reader {0} end.".format(reader))
+
+def hard_reboot(reader):
+    url = 'http://172.16.11.{0}/cgi-bin/tools/reboot.cgi?Ch=0'.format(reader)
+    urllib.urlopen(url)
+
 def main():
-    moxa_readers = ['161', '162', '163', '164', '165', '166', '167', '168', '169', '170', '175', '176']
-    uno1150_readers = ['177', '178', '179']
     default_applications = ['ntpclient', 'collector', 'retriever', 'datasender']
     target_reader = []
     target_app = []
     reboot_flag = False
+    
+    global glob_logger
+    hdlr = logging.FileHandler('/home/ubuntu/RemoteManagementTools/Rrestart.log')
+    formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+    hdlr.setFormatter(formatter)
+    glob_logger.addHandler(hdlr)
+    glob_logger.setLevel(logging.DEBUG)
     
     parser =  optparse.OptionParser("usage%prog " +\
             "-r <Target Readers> --ap <Target Applications(Optional)> --reboot <Hard reboot boolean options(False by default)>")
@@ -142,17 +192,13 @@ def main():
         reboot_flag = True
 
     if reboot_flag:
-        print("System reboot is going to execute.")
+        glob_logger.debug("System reboot is going to execute.")
     else:
-        print("Application reboot is going to exceute.")
+        glob_logger.debug("Application reboot is going to exceute.")
     
-    print("Following readers will be restarted:")
-    for each_reader in target_reader:
-        print each_reader
-    print("Following applications will be shut down:")
-    for each_app in target_app:
-        print each_app
-
+    glob_logger.debug("Target readers: " + str(target_reader))
+    glob_logger.debug("Target apps: " + str(target_app))
+    
     for each_reader in target_reader:
         try:
             if each_reader in moxa_readers:
@@ -161,20 +207,18 @@ def main():
             elif each_reader in uno1150_readers:
                 t = Thread(target=uno1150_readers_restart, args=('172.16.11.{0}'.format(each_reader), target_app, reboot_flag))
                 t.start()
-        except telnetlib.EOFError as e:
-            print e.args[0]
+        except EOFError as e:
+            glob_logger.error(e.args[0])
         except pexpect.TIMEOUT as e:
-            print e.args[0]
+            glob_logger.error(e.args[0])
         except pexpect.EOF as e:
-            print e.args[0]
+            glob_logger.error(e.args[0])
         except Exception as e:
-            print e.args[0]
+            glob_logger.error(e.args[0])
     
     for thread in threading.enumerate():
         if thread is not threading.currentThread():
             thread.join()
-    
-
 
     exit(0)
                     

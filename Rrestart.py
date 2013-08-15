@@ -9,6 +9,7 @@ from time import sleep
 moxa_readers = ['161', '162', '163', '164', '165', '166', '167', '168', '169', '170', '175', '176']
 uno1150_readers = ['177', '178', '179']
 sleep_time = 20
+reboot_sleep_time = 240
 glob_logger = logging.getLogger('Rrestart')
 
 def moxa_readers_restart(enclosure, applications_list, hard_reboot_flag=False):
@@ -28,10 +29,11 @@ def moxa_readers_restart(enclosure, applications_list, hard_reboot_flag=False):
             else:
                 telnetcon.run("reboot")
                 glob_logger.debug("System reboot on reader {0} completed.".format(enclosure))
-
-        sleep(sleep_time)
+        if (hard_reboot_flag):
+            sleep(reboot_sleep_time)
+        else:
+            sleep(sleep_time)
         remote_diag(enclosure)
-
     except Exception as e:
         raise Exception("Exception on reader {0} ".format(enclosure) + e.args[0])
 
@@ -85,10 +87,11 @@ def uno1150_readers_restart(enclosure, applications_list, hard_reboot_flag=False
             else:
                 SSH_con.run("restart",'[\$$]', expect_ret=False)
                 glob_logger.debug("System reboot on reader {0} completed.".format(enclosure))
-        
-        sleep(sleep_time)
+        if (hard_reboot_flag):
+            sleep(reboot_sleep_time)
+        else:
+            sleep(sleep_time)
         remote_diag(enclosure)
-
     except Exception as e:
         raise Exception("Exception on reader {0} ".format(enclosure) + e.args[0])
 
